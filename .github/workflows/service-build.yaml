@@ -99,9 +99,7 @@ jobs:
 
       - name: Sign image
         run: |
-          DIGEST=$(docker buildx imagetools inspect "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}" \
-            --format '{{.Manifest.Digest}}')
-          cosign sign --yes "${{ env.IMAGE_NAME }}@${DIGEST}"
+          cosign sign --yes "${{ env.IMAGE_NAME }}:$(echo '${{ github.sha }}' | cut -c1-7)"
 
       # ── Deliver — open PR against gitops ─────────────────────────────────
       - name: Open gitops PR with new image tag
