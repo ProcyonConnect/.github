@@ -24,7 +24,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/ProcyonConnect/${{ inputs.service-name }}
+  IMAGE_NAME: ghcr.io/procyonconnect/${{ inputs.service-name }}
 
 jobs:
   build-scan-deliver:
@@ -118,7 +118,7 @@ jobs:
           apiVersion: kustomize.config.k8s.io/v1beta1
           kind: Kustomization
           images:
-            - name: ghcr.io/ProcyonConnect/${SERVICE}
+            - name: ghcr.io/procyonconnect/${SERVICE}
               newTag: "${IMAGE_TAG:0:7}"
           EOF
 
