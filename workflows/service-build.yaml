@@ -1,0 +1,139 @@
+name: Build, Scan, and Deliver
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: "Service name (used as image name in GHCR)"
+        required: true
+        type: string
+      dockerfile-path:
+        description: "Path to Dockerfile"
+        required: false
+        type: string
+        default: "Dockerfile"
+      image-context:
+        description: "Docker build context"
+        required: false
+        type: string
+        default: "."
+    secrets:
+      GITOPS_TOKEN:
+        description: "PAT with write access to the gitops repo"
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/ProcyonConnect/${{ inputs.service-name }}
+
+jobs:
+  build-scan-deliver:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # for cosign keyless signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build image (no push yet — scan first)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.image-context }}
+          file: ${{ inputs.dockerfile-path }}
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Scan ──────────────────────────────────────────────────────────────
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: false
+
+      # ── Push ──────────────────────────────────────────────────────────────
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.image-context }}
+          file: ${{ inputs.dockerfile-path }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Sign (keyless via Sigstore — no-op locally, required for production) ──
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        run: |
+          cosign sign --yes ${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}
+
+      # ── Deliver — open PR against gitops ─────────────────────────────────
+      - name: Open gitops PR with new image tag
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
+          SERVICE: ${{ inputs.service-name }}
+        run: |
+          # Clone gitops
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/ProcyonConnect/gitops.git /tmp/gitops
+          cd /tmp/gitops
+
+          # Write Change Component
+          CHANGE_DIR="changes/${SERVICE}/$(date -u +%Y%m%dT%H%M%S)-${IMAGE_TAG:0:7}"
+          mkdir -p "$CHANGE_DIR"
+          cat > "${CHANGE_DIR}/kustomization.yaml" <<EOF
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          images:
+            - name: ghcr.io/ProcyonConnect/${SERVICE}
+              newTag: "${IMAGE_TAG:0:7}"
+          EOF
+
+          # Commit and push on a new branch
+          BRANCH="deploy/${SERVICE}/${IMAGE_TAG:0:7}"
+          git config user.email "ci@procyonconnect.io"
+          git config user.name "ProcyonConnect CI"
+          git checkout -b "$BRANCH"
+          git add .
+          git commit -m "chore(deploy): ${SERVICE} → ${IMAGE_TAG:0:7}"
+          git push origin "$BRANCH"
+
+          # Open PR
+          gh pr create \
+            --title "deploy(${SERVICE}): ${IMAGE_TAG:0:7}" \
+            --body "Automated deploy from commit ${IMAGE_TAG} in ${GITHUB_REPOSITORY}." \
+            --base main \
+            --head "$BRANCH"
