@@ -15,3 +15,5 @@ jobs:
           lint: true
           breaking: ${{ github.event_name == 'pull_request' }}
           breaking_against: "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }}"
+          push: false
+          archive: false
