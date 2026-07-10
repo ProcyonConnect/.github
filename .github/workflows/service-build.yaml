@@ -93,11 +93,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── Sign (keyless via Sigstore — no-op locally, required for production) ──
+      # ── Sign (keyless via Sigstore) ───────────────────────────────────────────
+      # continue-on-error: requires org-level OIDC to be enabled (admin config).
+      # Signing is non-blocking in Phase 1; enforce as a hard gate in Phase 2.
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
+        continue-on-error: true
 
       - name: Sign image
+        continue-on-error: true
         run: |
           cosign sign --yes "${{ env.IMAGE_NAME }}:$(echo '${{ github.sha }}' | cut -c1-7)"
 
