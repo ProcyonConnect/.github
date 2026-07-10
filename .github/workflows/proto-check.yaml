@@ -1,0 +1,17 @@
+name: Proto Lint and Breaking Change Check
+
+on:
+  workflow_call:
+
+jobs:
+  buf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Buf lint and breaking change check
+        uses: bufbuild/buf-action@v1
+        with:
+          lint: true
+          breaking: ${{ github.event_name == 'pull_request' }}
+          breaking_against: "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }}"
